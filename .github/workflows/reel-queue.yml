@@ -1,0 +1,49 @@
+name: Reel queue
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # every 10 minutes (GitHub may delay a few minutes)
+  workflow_dispatch:          # lets you press "Run workflow" manually
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: reel-queue
+  cancel-in-progress: false   # never run two at once
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ffmpeg
+        run: command -v ffmpeg >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
+
+      - name: Install Python packages (always newest yt-dlp)
+        run: |
+          pip install -q -r requirements.txt
+          pip install -q -U yt-dlp
+
+      - name: Process queue
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          FB_COOKIES: ${{ secrets.FB_COOKIES }}
+        run: python -m reelbot.main
+
+      - name: Keep schedule alive (public repos pause schedules after 60 idle days)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow enable reel-queue.yml || true
