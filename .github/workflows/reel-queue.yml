@@ -31,8 +31,20 @@ jobs:
         with:
           python-version: "3.12"
 
+      # GitHub's Ubuntu mirrors sometimes fail to resolve (DNS) and apt then hangs
+      # for an hour. So: hard time limits, and a fallback ffmpeg from PyPI.
+      # This step can never block or fail the job.
       - name: Install ffmpeg
-        run: command -v ffmpeg >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
+        timeout-minutes: 8
+        continue-on-error: true
+        run: |
+          command -v ffmpeg >/dev/null && exit 0
+          sudo timeout 120 apt-get update -qq || true
+          sudo timeout 240 apt-get install -y -qq ffmpeg || true
+          command -v ffmpeg >/dev/null && exit 0
+          pip install -q imageio-ffmpeg
+          sudo ln -sf "$(python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')" /usr/local/bin/ffmpeg
+          ffmpeg -version | head -1
 
       - name: Install Python packages (always newest yt-dlp)
         run: |
