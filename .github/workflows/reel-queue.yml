@@ -1,9 +1,16 @@
 name: Reel queue
 
+# How the 10 minute rhythm works:
+# GitHub's own timer is unreliable (gaps of 30 to 80 minutes), so one job stays
+# alive for about 5 hours 20 minutes and loops by itself: one pass over the
+# queue, wait 10 minutes, repeat. At the end it starts the next job.
+# The hourly schedule is only a safety net that restarts the loop if the chain
+# ever breaks. Runs never overlap (see concurrency).
+
 on:
   schedule:
-    - cron: "*/10 * * * *"   # every 10 minutes (GitHub may delay a few minutes)
-  workflow_dispatch:          # lets you press "Run workflow" manually
+    - cron: "17 * * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,12 +18,12 @@ permissions:
 
 concurrency:
   group: reel-queue
-  cancel-in-progress: false   # never run two at once
+  cancel-in-progress: false
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
 
@@ -32,7 +39,7 @@ jobs:
           pip install -q -r requirements.txt
           pip install -q -U yt-dlp
 
-      - name: Process queue
+      - name: Loop over the queue (about 5h20m)
         env:
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
@@ -40,10 +47,19 @@ jobs:
           DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
           FB_COOKIES: ${{ secrets.FB_COOKIES }}
-        run: python -m reelbot.main
+        run: python -m reelbot.main --loop
 
-      - name: Keep schedule alive (public repos pause schedules after 60 idle days)
+      # Only runs if the loop ended normally. A failed loop does NOT restart
+      # itself, so a broken setup cannot spin forever; the hourly schedule retries.
+      - name: Start the next loop
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run reel-queue.yml --ref "${{ github.ref_name }}"
+
+      - name: Keep schedule alive
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: gh workflow enable reel-queue.yml || true
